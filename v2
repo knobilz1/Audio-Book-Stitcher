@@ -9,89 +9,177 @@ import tarfile
 import platform
 import shutil
 
+# --- Modern Theme Constants ---
+C_BG = "#f8fafc"        # Light Slate background
+C_HEADER = "#4f46e5"    # Indigo 600
+C_CARD = "#ffffff"      # White
+C_TEXT = "#1e293b"      # Slate 800
+C_SUBTEXT = "#64748b"   # Slate 500
+C_ACCENT = "#6366f1"    # Indigo 500
+C_DANGER = "#ef4444"    # Red 500
+C_SUCCESS = "#22c55e"   # Green 500
+C_BORDER = "#e2e8f0"    # Slate 200
+
 class AudiobookApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Auto-Config Audiobook Builder (M4B)")
-        self.root.geometry("600x650")
-        self.root.configure(bg="#f1f5f9")
+        self.root.title("Audiobook Builder Pro")
+        self.root.geometry("700x750")
+        self.root.configure(bg=C_BG)
 
         self.files = []
-        self.ffmpeg_path = "ffmpeg" # Default
+        self.ffmpeg_path = "ffmpeg"
+        self.setup_styles()
+        
+        # --- Layout ---
+        self.create_header()
+        
+        # Main Container
+        self.main_container = tk.Frame(root, bg=C_BG, padx=30, pady=20)
+        self.main_container.pack(fill="both", expand=True)
+
+        self.create_engine_status()
+        self.create_metadata_section()
+        self.create_file_list_section()
+        self.create_controls()
+        
+        self.status_bar = tk.Label(root, text="Ready to build", bg=C_BG, fg=C_SUBTEXT, font=("Segoe UI", 9), pady=10)
+        self.status_bar.pack(side="bottom")
+
+        # Start FFmpeg Check
         self.ffmpeg_ready = self.check_ffmpeg_silent()
+        self.update_initial_engine_state()
 
-        # --- UI Layout ---
-        header = tk.Frame(root, bg="#8b5cf6", height=60)
+    def setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Treeview Styling
+        style.configure("Treeview", 
+                        background=C_CARD, 
+                        foreground=C_TEXT, 
+                        rowheight=30, 
+                        fieldbackground=C_CARD, 
+                        bordercolor=C_BORDER,
+                        borderwidth=0,
+                        font=("Segoe UI", 10))
+        style.map("Treeview", background=[('selected', C_ACCENT)])
+        style.configure("Treeview.Heading", 
+                        background=C_BG, 
+                        foreground=C_SUBTEXT, 
+                        font=("Segoe UI", 9, "bold"), 
+                        borderwidth=0)
+
+        # Progressbar Styling
+        style.configure("TProgressbar", thickness=8, troughcolor=C_BORDER, background=C_ACCENT, borderwidth=0)
+
+    def create_header(self):
+        header = tk.Frame(self.root, bg=C_HEADER, height=80)
         header.pack(fill="x")
-        tk.Label(header, text="AUDIOBOOK BUILDER", font=("Arial", 14, "bold"), fg="white", bg="#8b5cf6").pack(pady=15)
-
-        # Automation Status / Download Section
-        self.setup_frame = tk.Frame(root, bg="#f8fafc", pady=15)
-        self.setup_frame.pack(fill="x", padx=20, pady=10)
+        header.pack_propagate(False)
         
-        self.setup_label = tk.Label(self.setup_frame, text="Checking System Engine...", bg="#f8fafc", font=("Arial", 10, "bold"))
-        self.setup_label.pack()
+        title_label = tk.Label(header, text="🎵 Audiobook Builder", font=("Segoe UI", 18, "bold"), fg="white", bg=C_HEADER)
+        title_label.pack(pady=10)
+        subtitle = tk.Label(header, text="Merge audio parts into high-quality M4B files", font=("Segoe UI", 9), fg="#c7d2fe", bg=C_HEADER)
+        subtitle.pack()
 
-        self.setup_progress = ttk.Progressbar(self.setup_frame, length=400, mode='determinate')
-        self.setup_progress.pack(pady=10)
+    def create_engine_status(self):
+        self.engine_frame = tk.Frame(self.main_container, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1, padx=15, pady=15)
+        self.engine_frame.pack(fill="x", pady=(0, 20))
         
-        if not self.ffmpeg_ready:
-            self.setup_label.config(text="FFmpeg Missing. Starting Automatic Download...", fg="#991b1b")
-            threading.Thread(target=self.automate_ffmpeg_setup, daemon=True).start()
-        else:
-            self.setup_label.config(text="✅ Engine Ready (Engine Found)", fg="#16a34a")
-            self.setup_progress.set(100)
-            self.setup_progress.pack_forget()
+        self.engine_label = tk.Label(self.engine_frame, text="Checking System Engine...", bg=C_CARD, font=("Segoe UI", 10, "bold"), fg=C_TEXT)
+        self.engine_label.pack(side="left")
 
-        # Metadata
-        meta_frame = tk.Frame(root, bg="#f1f5f9", padx=20, pady=10)
-        meta_frame.pack(fill="x")
+        self.setup_progress = ttk.Progressbar(self.engine_frame, mode='determinate', style="TProgressbar")
+        self.setup_progress.pack(side="right", fill="x", expand=True, padx=(20, 0))
 
-        tk.Label(meta_frame, text="Book Title:", bg="#f1f5f9", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w")
-        self.title_entry = tk.Entry(meta_frame, width=40)
-        self.title_entry.grid(row=0, column=1, pady=5, padx=10)
-        self.title_entry.insert(0, "My Audiobook")
+    def create_metadata_section(self):
+        meta_box = tk.LabelFrame(self.main_container, text=" Book Details ", bg=C_BG, fg=C_SUBTEXT, font=("Segoe UI", 9, "bold"), labelanchor="nw", padx=10, pady=10)
+        meta_box.pack(fill="x", pady=(0, 20))
 
-        tk.Label(meta_frame, text="Author:", bg="#f1f5f9", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="w")
-        self.author_entry = tk.Entry(meta_frame, width=40)
-        self.author_entry.grid(row=1, column=1, pady=5, padx=10)
+        # Title
+        tk.Label(meta_box, text="Title", bg=C_BG, fg=C_SUBTEXT, font=("Segoe UI", 8, "bold")).grid(row=0, column=0, sticky="w", padx=5)
+        self.title_entry = tk.Entry(meta_box, font=("Segoe UI", 11), bg=C_CARD, relief="flat", highlightbackground=C_BORDER, highlightthickness=1)
+        self.title_entry.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 10), ipady=5)
+        self.title_entry.insert(0, "My New Audiobook")
+
+        # Author
+        tk.Label(meta_box, text="Author", bg=C_BG, fg=C_SUBTEXT, font=("Segoe UI", 8, "bold")).grid(row=0, column=1, sticky="w", padx=5)
+        self.author_entry = tk.Entry(meta_box, font=("Segoe UI", 11), bg=C_CARD, relief="flat", highlightbackground=C_BORDER, highlightthickness=1)
+        self.author_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=(0, 10), ipady=5)
         self.author_entry.insert(0, "Unknown Author")
 
-        # File List
-        list_frame = tk.Frame(root, bg="white", bd=1, relief="sunken")
-        list_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        meta_box.columnconfigure(0, weight=1)
+        meta_box.columnconfigure(1, weight=1)
 
-        self.tree = ttk.Treeview(list_frame, columns=("Name", "Size"), show="headings")
-        self.tree.heading("Name", text="Filename")
+    def create_file_list_section(self):
+        list_label = tk.Label(self.main_container, text="CHAPTER QUEUE", font=("Segoe UI", 9, "bold"), bg=C_BG, fg=C_SUBTEXT)
+        list_label.pack(anchor="w", pady=(0, 5))
+
+        list_frame = tk.Frame(self.main_container, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
+        list_frame.pack(fill="both", expand=True)
+
+        self.tree = ttk.Treeview(list_frame, columns=("Order", "Name", "Size"), show="headings")
+        self.tree.heading("Order", text="#")
+        self.tree.heading("Name", text="File Name")
         self.tree.heading("Size", text="Size")
+        
+        self.tree.column("Order", width=40, anchor="center")
         self.tree.column("Name", width=400)
-        self.tree.column("Size", width=100)
+        self.tree.column("Size", width=100, anchor="e")
+        
         self.tree.pack(side="left", fill="both", expand=True)
 
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
-        # Buttons
-        btn_frame = tk.Frame(root, bg="#f1f5f9", pady=10)
-        btn_frame.pack(fill="x", padx=20)
+    def create_controls(self):
+        # Top Row Buttons
+        btn_frame = tk.Frame(self.main_container, bg=C_BG, pady=15)
+        btn_frame.pack(fill="x")
 
-        tk.Button(btn_frame, text="+ Add Files", command=self.add_files, bg="#e2e8f0", padx=10).pack(side="left")
-        tk.Button(btn_frame, text="Clear", command=self.clear_files, bg="#fee2e2", fg="#b91c1c", padx=10).pack(side="left", padx=10)
-        tk.Button(btn_frame, text="Sort A-Z", command=self.sort_files, bg="#f0f9ff", padx=10).pack(side="left")
+        # Styled secondary buttons
+        btn_add = tk.Button(btn_frame, text="📁 Add Files", command=self.add_files, 
+                           bg=C_CARD, fg=C_ACCENT, font=("Segoe UI", 10, "bold"), 
+                           relief="flat", highlightbackground=C_ACCENT, highlightthickness=1,
+                           padx=15, pady=5, cursor="hand2")
+        btn_add.pack(side="left", padx=(0, 10))
 
-        # Build Button
-        self.build_btn = tk.Button(root, text="BUILD M4B AUDIOBOOK", font=("Arial", 12, "bold"), 
-                                   bg="#7c3aed", fg="white", pady=12, command=self.start_build)
-        self.build_btn.pack(fill="x", padx=20, pady=20)
+        btn_sort = tk.Button(btn_frame, text="AZ Sort", command=self.sort_files, 
+                            bg=C_CARD, fg=C_SUBTEXT, font=("Segoe UI", 10), 
+                            relief="flat", highlightbackground=C_BORDER, highlightthickness=1,
+                            padx=15, pady=5, cursor="hand2")
+        btn_sort.pack(side="left", padx=5)
 
-        # Status
-        self.status_label = tk.Label(root, text="Ready", bg="#f1f5f9", font=("Arial", 9, "italic"))
-        self.status_label.pack()
+        btn_clear = tk.Button(btn_frame, text="Clear List", command=self.clear_files, 
+                             bg=C_CARD, fg=C_DANGER, font=("Segoe UI", 10), 
+                             relief="flat", highlightbackground=C_DANGER, highlightthickness=0,
+                             padx=15, pady=5, cursor="hand2")
+        btn_clear.pack(side="right")
+
+        # Large Action Button
+        self.build_btn = tk.Button(self.main_container, text="🚀 BUILD M4B AUDIOBOOK", 
+                                  font=("Segoe UI", 14, "bold"), bg=C_ACCENT, fg="white", 
+                                  activebackground=C_HEADER, activeforeground="white",
+                                  relief="flat", pady=15, cursor="hand2", state="normal",
+                                  command=self.start_build)
+        self.build_btn.pack(fill="x", pady=10)
+
+    # --- Initial State Management ---
+
+    def update_initial_engine_state(self):
+        if not self.ffmpeg_ready:
+            self.engine_label.config(text="⚙️ Engine Missing. Downloading...", fg=C_DANGER)
+            threading.Thread(target=self.automate_ffmpeg_setup, daemon=True).start()
+        else:
+            self.engine_label.config(text="✅ Audio Engine Ready", fg=C_SUCCESS)
+            self.setup_progress.set(100)
+            self.setup_progress.pack_forget()
+
+    # --- Business Logic ---
 
     def check_ffmpeg_silent(self):
-        """Checks if FFmpeg is installed or exists in the local engine folder."""
-        # 1. Check if it's already in the system PATH
         try:
             startupinfo = None
             if os.name == 'nt':
@@ -103,7 +191,6 @@ class AudiobookApp:
         except FileNotFoundError:
             pass
 
-        # 2. Check the local engine folder RECURSIVELY
         engine_dir = os.path.join(os.getcwd(), "ffmpeg_engine")
         if os.path.exists(engine_dir):
             binary_name = "ffmpeg.exe" if os.name == 'nt' else "ffmpeg"
@@ -114,73 +201,54 @@ class AudiobookApp:
         return False
 
     def automate_ffmpeg_setup(self):
-        """Automatically downloads and extracts the correct FFmpeg version for the OS."""
         system = platform.system()
         engine_dir = os.path.join(os.getcwd(), "ffmpeg_engine")
-        
-        if not os.path.exists(engine_dir):
-            os.makedirs(engine_dir)
+        if not os.path.exists(engine_dir): os.makedirs(engine_dir)
 
-        # Define specific direct download links
         if system == "Windows":
             url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
             ext = ".zip"
-        elif system == "Darwin": # Mac
+        elif system == "Darwin":
             url = "https://evermeet.cx/ffmpeg/getrelease/zip"
             ext = ".zip"
-        else: # Linux
+        else:
             url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
             ext = ".tar.xz"
 
         temp_file = os.path.join(engine_dir, f"ffmpeg_download{ext}")
-
         try:
             def progress_hook(count, block_size, total_size):
                 if total_size <= 0: return
-                percent = int(count * block_size * 100 / total_size)
-                percent = min(100, percent) # Cap at 100
-                self.root.after(0, lambda: self.setup_progress.configure(value=percent))
-                self.root.after(0, lambda: self.setup_label.config(text=f"Downloading Engine: {percent}%"))
+                p = int(count * block_size * 100 / total_size)
+                self.root.after(0, lambda: self.setup_progress.configure(value=p))
+                self.root.after(0, lambda: self.engine_label.config(text=f"⚙️ Downloading Engine: {p}%"))
 
-            add_log = lambda m: self.root.after(0, lambda: self.setup_label.config(text=m))
-            
-            add_log("Starting Download (50MB+)...")
             urllib.request.urlretrieve(url, temp_file, reporthook=progress_hook)
+            self.root.after(0, lambda: self.engine_label.config(text="📦 Extracting Engine..."))
             
-            add_log("Extracting Engine... please wait.")
             if ext == ".zip":
-                with zipfile.ZipFile(temp_file, 'r') as zip_ref:
-                    zip_ref.extractall(engine_dir)
+                with zipfile.ZipFile(temp_file, 'r') as z: z.extractall(engine_dir)
             else:
-                with tarfile.open(temp_file, "r:xz") as tar_ref:
-                    tar_ref.extractall(engine_dir)
+                with tarfile.open(temp_file, "r:xz") as t: t.extractall(engine_dir)
 
-            # Cleanup download file
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+            if os.path.exists(temp_file): os.remove(temp_file)
 
-            # Find the bin folder and update the path
             if self.check_ffmpeg_silent():
-                if os.name != 'nt':
-                    os.chmod(self.ffmpeg_path, 0o755)
-                
+                if os.name != 'nt': os.chmod(self.ffmpeg_path, 0o755)
                 self.ffmpeg_ready = True
-                self.root.after(0, lambda: self.setup_label.config(text="✅ Engine Downloaded & Configured!", fg="#16a34a"))
+                self.root.after(0, lambda: self.engine_label.config(text="✅ Audio Engine Ready", fg=C_SUCCESS))
                 self.root.after(0, lambda: self.setup_progress.pack_forget())
             else:
-                raise Exception("Could not find the FFmpeg binary in the extracted files.")
-            
+                raise Exception("Binary not found after extraction.")
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Setup Error", f"Automatic setup failed: {e}"))
-            self.root.after(0, lambda: self.setup_label.config(text="❌ Setup Failed", fg="#991b1b"))
+            self.root.after(0, lambda: messagebox.showerror("Setup Error", f"Failed to download engine: {e}"))
+            self.root.after(0, lambda: self.engine_label.config(text="❌ Engine Setup Failed", fg=C_DANGER))
 
     def add_files(self):
         new_files = filedialog.askopenfilenames(filetypes=[("Audio Files", "*.mp3 *.m4a *.m4b")])
         if new_files:
             for f in new_files:
-                size = os.path.getsize(f) / (1024 * 1024)
                 self.files.append(f)
-                self.tree.insert("", "end", values=(os.path.basename(f), f"{size:.2f} MB"))
             self.sort_files()
 
     def sort_files(self):
@@ -192,29 +260,30 @@ class AudiobookApp:
         self.refresh_tree()
 
     def refresh_tree(self):
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        for f in self.files:
+        for item in self.tree.get_children(): self.tree.delete(item)
+        for i, f in enumerate(self.files):
             size = os.path.getsize(f) / (1024 * 1024)
-            self.tree.insert("", "end", values=(os.path.basename(f), f"{size:.2f} MB"))
+            self.tree.insert("", "end", values=(i + 1, os.path.basename(f), f"{size:.2f} MB"))
 
     def start_build(self):
         if not self.ffmpeg_ready:
-            messagebox.showerror("Wait", "Please wait for the FFmpeg engine to finish downloading.")
+            messagebox.showerror("Wait", "The audio engine is not ready yet.")
             return
-
         if not self.files:
-            messagebox.showwarning("Empty List", "Please add some audio files first.")
+            messagebox.showwarning("Empty", "Please add some audio files.")
             return
         
-        output_path = filedialog.asksaveasfilename(defaultextension=".m4b", 
-                                                 initialfile=f"{self.title_entry.get()}.m4b",
-                                                 filetypes=[("Audiobook", "*.m4b")])
-        if not output_path:
-            return
+        out = filedialog.asksaveasfilename(defaultextension=".m4b", 
+                                          initialfile=f"{self.title_entry.get()}.m4b",
+                                          filetypes=[("Audiobook", "*.m4b")])
+        if not out: return
 
-        self.build_btn.config(state="disabled", text="PROCESSING...")
-        threading.Thread(target=self.run_ffmpeg, args=(output_path,), daemon=True).start()
+        self.build_btn.config(state="disabled", text="🔨 BUILDING BOOK...")
+        self.engine_frame.pack(fill="x", pady=(0, 20)) # Bring back progress bar
+        self.setup_progress.pack(side="right", fill="x", expand=True, padx=(20, 0))
+        self.setup_progress.configure(value=0)
+        
+        threading.Thread(target=self.run_ffmpeg, args=(out,), daemon=True).start()
 
     def run_ffmpeg(self, output_path):
         try:
@@ -236,7 +305,9 @@ class AudiobookApp:
                 output_path
             ]
 
-            self.update_status("Merging all parts into your Audiobook...")
+            self.update_status("Merging tracks into M4B...")
+            self.root.after(0, lambda: self.setup_progress.configure(mode='indeterminate'))
+            self.root.after(0, lambda: self.setup_progress.start())
             
             startupinfo = None
             if os.name == 'nt':
@@ -246,12 +317,11 @@ class AudiobookApp:
             result = subprocess.run(command, capture_output=True, text=True, startupinfo=startupinfo)
 
             if result.returncode == 0:
-                self.root.after(0, lambda: messagebox.showinfo("Success", f"Audiobook created successfully!\n\nSaved to: {output_path}"))
+                self.root.after(0, lambda: messagebox.showinfo("Success", f"Audiobook created successfully!"))
             else:
-                self.root.after(0, lambda: messagebox.showerror("Error", f"FFmpeg failed:\n{result.stderr}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Build failed: {result.stderr}"))
 
-            if os.path.exists(list_file):
-                os.remove(list_file)
+            if os.path.exists(list_file): os.remove(list_file)
 
         except Exception as e:
             self.root.after(0, lambda: messagebox.showerror("System Error", str(e)))
@@ -259,11 +329,16 @@ class AudiobookApp:
             self.root.after(0, self.reset_ui)
 
     def update_status(self, msg):
-        self.root.after(0, lambda: self.status_label.config(text=msg))
+        self.root.after(0, lambda: self.status_bar.config(text=msg))
+        self.root.after(0, lambda: self.engine_label.config(text=f"🔨 {msg}"))
 
     def reset_ui(self):
-        self.build_btn.config(state="normal", text="BUILD M4B AUDIOBOOK")
-        self.status_label.config(text="Ready")
+        self.build_btn.config(state="normal", text="🚀 BUILD M4B AUDIOBOOK")
+        self.status_bar.config(text="Ready")
+        self.setup_progress.stop()
+        self.setup_progress.configure(mode='determinate', value=100)
+        self.setup_progress.pack_forget()
+        self.engine_label.config(text="✅ Audio Engine Ready", fg=C_SUCCESS)
 
 if __name__ == "__main__":
     root = tk.Tk()
