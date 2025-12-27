@@ -8,6 +8,7 @@ import zipfile
 import tarfile
 import platform
 import shutil
+import re
 
 # --- Modern Theme Constants ---
 C_BG = "#f8fafc"        # Light Slate background
@@ -185,7 +186,7 @@ class AudiobookApp:
             if os.name == 'nt':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            subprocess.run(['ffmpeg', '-version'], capture_output=True, startupinfo=startupinfo)
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             self.ffmpeg_path = "ffmpeg"
             return True
         except FileNotFoundError:
@@ -199,6 +200,29 @@ class AudiobookApp:
                     self.ffmpeg_path = os.path.join(root, binary_name)
                     return True
         return False
+
+    def get_audio_duration(self, file_path):
+        """Helper to get duration of a single audio file in seconds."""
+        try:
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+            # Using ffmpeg to get duration
+            result = subprocess.run(
+                [self.ffmpeg_path, '-i', file_path],
+                capture_output=True, text=True, startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            # Duration is in stderr
+            match = re.search(r"Duration:\s(\d+):(\d+):(\d+\.\d+)", result.stderr)
+            if match:
+                h, m, s = match.groups()
+                return int(h) * 3600 + int(m) * 60 + float(s)
+        except Exception:
+            pass
+        return 0
 
     def automate_ffmpeg_setup(self):
         system = platform.system()
@@ -278,24 +302,38 @@ class AudiobookApp:
                                           filetypes=[("Audiobook", "*.m4b")])
         if not out: return
 
-        self.build_btn.config(state="disabled", text="🔨 BUILDING BOOK...")
-        self.engine_frame.pack(fill="x", pady=(0, 20)) # Bring back progress bar
+        self.build_btn.config(state="disabled", text="🔨 ANALYZING FILES...")
+        self.engine_frame.pack(fill="x", pady=(0, 20)) 
         self.setup_progress.pack(side="right", fill="x", expand=True, padx=(20, 0))
-        self.setup_progress.configure(value=0)
+        self.setup_progress.configure(value=0, mode='determinate')
         
         threading.Thread(target=self.run_ffmpeg, args=(out,), daemon=True).start()
 
     def run_ffmpeg(self, output_path):
         try:
+            # Step 1: Calculate Total Duration for Progress
+            total_duration = 0
+            for i, file_path in enumerate(self.files):
+                self.update_status(f"Scanning file {i+1} of {len(self.files)}...")
+                total_duration += self.get_audio_duration(file_path)
+            
+            if total_duration == 0:
+                total_duration = 1 # Avoid division by zero
+            
+            # Step 2: Prepare Concat List
             list_file = "ffmpeg_list.txt"
             with open(list_file, "w", encoding="utf-8") as f:
                 for file_path in self.files:
+                    # Escape single quotes for ffmpeg
                     safe_path = file_path.replace("'", "'\\''")
                     f.write(f"file '{safe_path}'\n")
 
             title = self.title_entry.get()
             author = self.author_entry.get()
 
+            # Step 3: Run FFmpeg with real-time output monitoring
+            # We add -progress pipe:1 to get machine-readable updates, 
+            # or we can just parse the default stderr which is usually easier for time= strings.
             command = [
                 self.ffmpeg_path, '-y', '-f', 'concat', '-safe', '0', '-i', list_file,
                 '-metadata', f'title={title}',
@@ -306,20 +344,40 @@ class AudiobookApp:
             ]
 
             self.update_status("Merging tracks into M4B...")
-            self.root.after(0, lambda: self.setup_progress.configure(mode='indeterminate'))
-            self.root.after(0, lambda: self.setup_progress.start())
             
             startupinfo = None
             if os.name == 'nt':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-            result = subprocess.run(command, capture_output=True, text=True, startupinfo=startupinfo)
+            # Launch process
+            process = subprocess.Popen(
+                command, 
+                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                universal_newlines=True,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
 
-            if result.returncode == 0:
+            # Monitor stderr for progress
+            # FFmpeg writes progress to stderr
+            for line in process.stderr:
+                # Look for time=00:00:00.00
+                time_match = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", line)
+                if time_match:
+                    h, m, s = time_match.groups()
+                    current_seconds = int(h) * 3600 + int(m) * 60 + float(s)
+                    percent = min(100, int((current_seconds / total_duration) * 100))
+                    self.root.after(0, lambda p=percent: self.setup_progress.configure(value=p))
+                    self.root.after(0, lambda p=percent: self.engine_label.config(text=f"🔨 Processing: {p}%"))
+
+            process.wait()
+
+            if process.returncode == 0:
                 self.root.after(0, lambda: messagebox.showinfo("Success", f"Audiobook created successfully!"))
             else:
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Build failed: {result.stderr}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", "Build failed. Check if audio files are valid."))
 
             if os.path.exists(list_file): os.remove(list_file)
 
@@ -335,7 +393,6 @@ class AudiobookApp:
     def reset_ui(self):
         self.build_btn.config(state="normal", text="🚀 BUILD M4B AUDIOBOOK")
         self.status_bar.config(text="Ready")
-        self.setup_progress.stop()
         self.setup_progress.configure(mode='determinate', value=100)
         self.setup_progress.pack_forget()
         self.engine_label.config(text="✅ Audio Engine Ready", fg=C_SUCCESS)
